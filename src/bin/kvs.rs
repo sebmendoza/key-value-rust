@@ -1,7 +1,8 @@
 use clap::{arg, command, Command};
-use std::process;
+use kvs::{error::KvsResult, KvStore};
+use std::{env::current_dir, process};
 
-fn main() {
+fn main() -> KvsResult<()> {
     let matches = command!()
         .name(env!("CARGO_PKG_NAME"))
         .about(env!("CARGO_PKG_DESCRIPTION"))
@@ -20,22 +21,34 @@ fn main() {
         )
         .subcommand(
             Command::new("rm")
-                .about("Remove a data point given a key as input")
-                .arg(arg!([KEY] "Key to identify and delete data point").required(true)),
+            .about("Remove a data point given a key as input")
+            .arg(arg!([KEY] "Key to identify and delete data point").required(true)), // Ensure this is required
+    
         )
         .get_matches();
 
     // println!("{:#?}", matches);
+    let file_to_use = format!("{}/log.txt", current_dir()?.display());
 
-    if let Some(_matches) = matches.subcommand_matches("set") {
+    if let Some(matches) = matches.subcommand_matches("set") {
+        let key = matches.get_one::<String>("KEY").unwrap().to_owned();
+        let value = matches.get_one::<String>("VALUE").unwrap().to_owned();
+        let mut store = KvStore::open(file_to_use)?;
+
+        store.set(key, value)?;
+
+        Ok(())
+    } else if let Some(matches) = matches.subcommand_matches("get") {
         eprintln!("unimplemented");
         process::exit(1);
-    } else if let Some(_matches) = matches.subcommand_matches("get") {
-        eprintln!("unimplemented");
-        process::exit(1);
-    } else if let Some(_matches) = matches.subcommand_matches("rm") {
-        eprintln!("unimplemented");
-        process::exit(1);
+    } else if let Some(matches) = matches.subcommand_matches("rm") {
+        let key = matches.get_one::<String>("KEY").unwrap().to_owned();
+        let mut store = KvStore::open(file_to_use)?;
+        store.set(String::from("hello"), String::from("v"))?;
+
+        store.remove(key)?;
+
+        Ok(())
     } else {
         eprintln!("No recognizeable commands were run. Try cargo run -- --help for more info.");
         process::exit(1)
