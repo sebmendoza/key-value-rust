@@ -21,9 +21,8 @@ fn main() -> KvsResult<()> {
         )
         .subcommand(
             Command::new("rm")
-            .about("Remove a data point given a key as input")
-            .arg(arg!([KEY] "Key to identify and delete data point").required(true)), // Ensure this is required
-    
+                .about("Remove a data point given a key as input")
+                .arg(arg!([KEY] "Key to identify and delete data point").required(true)), // Ensure this is required
         )
         .get_matches();
 
@@ -34,17 +33,18 @@ fn main() -> KvsResult<()> {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         let value = matches.get_one::<String>("VALUE").unwrap().to_owned();
         let mut store = KvStore::open(file_to_use)?;
-
         store.set(key, value)?;
-
         Ok(())
     } else if let Some(matches) = matches.subcommand_matches("get") {
-        eprintln!("unimplemented");
-        process::exit(1);
+        let key = matches.get_one::<String>("KEY").unwrap().to_owned();
+        // println!("Before opening: {:?}", file_to_use);
+        let mut store = KvStore::open(file_to_use)?;
+        store.get(key)?;
+
+        Ok(())
     } else if let Some(matches) = matches.subcommand_matches("rm") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         let mut store = KvStore::open(file_to_use)?;
-        store.set(String::from("hello"), String::from("v"))?;
 
         store.remove(key)?;
 

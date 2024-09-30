@@ -4,8 +4,8 @@ use thiserror::Error;
 /// Errors that can occur in the KvStore.
 pub enum KvsErrors {
     /// Error indicating that the specified key was not found.
-    #[error("The {0} was not found")]
-    KeyNotFound(String),
+    #[error("Key not found")]
+    KeyNotFound(),
 
     /// Error indicating serialization or deserialization went wrong
     #[error("Serialization error")]

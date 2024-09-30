@@ -19,10 +19,10 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
-use std::{collections::HashMap, io::Write};
 
 /// Error handling module for KvStore.
 pub mod error;
@@ -40,8 +40,9 @@ enum Command {
 #[derive(Debug)]
 pub struct KvStore {
     store: HashMap<String, String>,
-    log_file: File,
+    // log_file: File,
     buff_writer: BufWriter<File>,
+    buff_reader: BufReader<File>,
 }
 
 // another way to initialize empty kvstore
@@ -58,11 +59,16 @@ impl KvStore {
     /// ```
     /// let mut store = KvStore::new();
     /// ```
-    pub fn new(file_handle: File, buff_writer: BufWriter<File>) -> KvStore {
+    pub fn new(
+        // file_hsandle: File,
+        buff_writer: BufWriter<File>,
+        buff_reader: BufReader<File>,
+    ) -> KvStore {
         KvStore {
             store: HashMap::new(),
-            log_file: file_handle,
-            buff_writer
+            // log_file: file_handle,
+            buff_writer,
+            buff_reader,
         }
     }
 
@@ -80,10 +86,9 @@ impl KvStore {
         };
 
         let serialized = serde_json::to_string(&cmd)?;
-
         writeln!(self.buff_writer, "{}", serialized)?;
-        self.buff_writer.flush()?;
-
+        // self.buff_writer.flush()?;
+        // self.buff_writer.write(serialized.as_bytes())?;
         self.store.insert(key, value);
         Ok(())
     }
@@ -94,10 +99,17 @@ impl KvStore {
     /// ```
     /// let value = store.get("key".to_string());
     /// ```
-    pub fn get(&self, key: String) -> KvsResult<Option<String>> {
+    pub fn get(&mut self, key: String) -> KvsResult<Option<String>> {
+        self.store = self.populate_store()?;
         match self.store.get(&key) {
-            Some(value) => Ok(Some(value.to_owned())),
-            None => Ok(None),
+            Some(value) => {
+                println!("{}", value);
+                Ok(Some(value.to_owned()))
+            }
+            None => {
+                print!("Key not found"); // Print "Key not found"
+                Ok(None)
+            }
         }
     }
 
@@ -108,38 +120,62 @@ impl KvStore {
     /// store.remove("key".to_string());
     /// ```    
     pub fn remove(&mut self, key: String) -> KvsResult<()> {
+        self.store = self.populate_store()?;
         if !self.store.contains_key(&key) {
-            return Err(KvsErrors::KeyNotFound(key));
+            print!("Key not found");
+            return Err(KvsErrors::KeyNotFound());
         }
 
-        let cmd = Command::Remove { key: key.clone() };
+        let cmd: Command = Command::Remove { key: key.clone() };
         let serialized = serde_json::to_string(&cmd)?;
-
-        
+        // self.buff_writer.write(serialized.as_bytes())?;
         writeln!(self.buff_writer, "{}", serialized)?;
-        self.buff_writer.flush()?;
         self.store.remove(&key);
+        // self.buff_writer.flush()?;
 
         Ok(())
     }
 
     /// Open the KvStore at a given path. Return the KvStore.   
     pub fn open(path: impl Into<PathBuf>) -> KvsResult<KvStore> {
-        let path: PathBuf = path.into(); // Need it to convert to pure PathBuf https://doc.rust-lang.org/beta/std/convert/trait.Into.html
+        let mut path: PathBuf = path.into(); // Need it to convert to pure PathBuf https://doc.rust-lang.org/beta/std/convert/trait.Into.html
+        if path.is_dir() {
+            path.push("log.txt");
+        }
         let file: File = File::options()
             .create(true)
             .append(true)
             .read(true)
             .open(path)?;
-        let buffed_writer = BufWriter::new(file.try_clone()?);
-
-        let new: KvStore = KvStore {
-            store: HashMap::new(),
-            log_file: file,
-            buff_writer: buffed_writer
-        };
+        let writer = BufWriter::new(file.try_clone()?);
+        let reader = BufReader::new(file.try_clone()?);
+        let new = KvStore::new(writer, reader);
         Ok(new)
         // Need a Buffer!!!!!1 That's how we read the actual lines in the file.
         // https://www.geeksforgeeks.org/i-o-buffering-and-its-various-techniques/
+    }
+
+    fn populate_store(&mut self) -> KvsResult<HashMap<String, String>> {
+        let mut populated_store = HashMap::new();
+        for line in self.buff_reader.by_ref().lines() {
+            let line = line?;
+            let processed_str = line.trim();
+            if processed_str.is_empty() {
+                continue;
+            }
+            let cmd: Command = serde_json::from_str(processed_str)?; // Deseraialize
+
+            match cmd {
+                Command::Set { key, value } => {
+                    // println!("This is the cmd for set: {} {}", key, value);
+                    populated_store.insert(key, value);
+                }
+                Command::Remove { key } => {
+                    // println!("This is the cmd for remove: {}", key);
+                    populated_store.remove(&key);
+                }
+            }
+        }
+        Ok(populated_store)
     }
 }
