@@ -20,9 +20,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+
+const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB
+const REDUNDANCY_THRESHOLD: f64 = 0.5; // 50% redundancy
 
 /// Error handling module for KvStore.
 pub mod error;
@@ -34,15 +38,62 @@ enum Command {
     Remove { key: String },
 }
 
+#[derive(Debug)]
+struct DiskInfo {
+    log_index: u64,
+    pos: u64,
+}
+
+#[derive(Debug)]
+struct LogFile {
+    id: u64,
+    path: PathBuf,
+    reader: BufReader<File>,
+    writer: BufWriter<File>,
+}
+
+impl LogFile {
+    pub fn new(id: u64, dir_path: &PathBuf) -> KvsResult<Self> {
+        let file_path = dir_path.join(format!("{}.log", id));
+        let file = File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .append(true)
+            .open(&file_path)?;
+        let reader = BufReader::new(file.try_clone()?);
+        let writer = BufWriter::new(file);
+        Ok(LogFile {
+            id,
+            path: file_path,
+            reader,
+            writer,
+        })
+    }
+
+    fn count_total_length(&mut self) -> KvsResult<u64> {
+        self.reader.seek(SeekFrom::Start(0))?;
+        let mut count = 0;
+        let mut line = String::new();
+        while self.reader.read_line(&mut line)? > 0 {
+            if !line.trim().is_empty() {
+                count += 1;
+            }
+            line.clear();
+        }
+        Ok(count)
+    }
+}
+
 /// A simple in-memory key-value store.
 ///
-/// `KvStore` has one field called store. This is where the database is held.
+/// `KvStore` has a store, buff_writer, and buff_reader.
 #[derive(Debug)]
 pub struct KvStore {
-    store: HashMap<String, String>,
-    // log_file: File,
-    buff_writer: BufWriter<File>,
-    buff_reader: BufReader<File>,
+    mem_index: HashMap<String, DiskInfo>, // maps keys to commandINFO
+    logs: HashMap<u64, LogFile>,          // maps log_id to LogFile
+    current_log_id: u64,
+    dir_path: PathBuf,
 }
 
 // another way to initialize empty kvstore
@@ -53,25 +104,6 @@ pub struct KvStore {
 // }
 
 impl KvStore {
-    /// Creates a new empty `KvStore`.
-    ///
-    /// # Example
-    /// ```
-    /// let mut store = KvStore::new();
-    /// ```
-    pub fn new(
-        // file_hsandle: File,
-        buff_writer: BufWriter<File>,
-        buff_reader: BufReader<File>,
-    ) -> KvStore {
-        KvStore {
-            store: HashMap::new(),
-            // log_file: file_handle,
-            buff_writer,
-            buff_reader,
-        }
-    }
-
     //// Inserts a key-value pair into the store. Overwrites the value if the key already exists.
     ///
     /// # Example
@@ -82,14 +114,28 @@ impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> KvsResult<()> {
         let cmd = Command::Set {
             key: key.clone(),
-            value: value.clone(),
+            value,
         };
-
+        let current_log = self.logs.get_mut(&self.current_log_id)
+            .ok_or(KvsErrors::LogNotFound())?;
+        
+        let pos = current_log.writer.seek(SeekFrom::End(0))?;
         let serialized = serde_json::to_string(&cmd)?;
-        writeln!(self.buff_writer, "{}", serialized)?;
-        // self.buff_writer.flush()?;
-        // self.buff_writer.write(serialized.as_bytes())?;
-        self.store.insert(key, value);
+        writeln!(current_log.writer, "{}", serialized)?;
+        current_log.writer.flush()?;
+
+        self.mem_index.insert(
+            key,
+            DiskInfo {
+                log_index: self.current_log_id,
+                pos,
+            },
+        );
+
+        if pos >= COMPACTION_THRESHOLD {
+            self.maybe_compact()?;
+        }
+
         Ok(())
     }
 
@@ -100,17 +146,22 @@ impl KvStore {
     /// let value = store.get("key".to_string());
     /// ```
     pub fn get(&mut self, key: String) -> KvsResult<Option<String>> {
-        self.store = self.populate_store()?;
-        match self.store.get(&key) {
-            Some(value) => {
-                println!("{}", value);
-                Ok(Some(value.to_owned()))
-            }
-            None => {
-                print!("Key not found"); // Print "Key not found"
-                Ok(None)
+        if let Some(disk_info) = self.mem_index.get(&key) {
+            let log = self.logs.get_mut(&disk_info.log_index)
+                .ok_or(KvsErrors::LogNotFound())?;
+            
+            log.reader.seek(SeekFrom::Start(disk_info.pos))?;
+            let mut line = String::new();
+            log.reader.read_line(&mut line)?;
+            
+            let cmd: Command = serde_json::from_str(line.trim())?;
+            if let Command::Set { key: _, value } = cmd {
+                print!("{}", value); // Print the value directly for found keys
+                return Ok(Some(value));
             }
         }
+        print!("Key not found"); // Print "Key not found" for missing keys
+        Ok(None)
     }
 
     /// Removes a key-value pair from the store.
@@ -120,62 +171,197 @@ impl KvStore {
     /// store.remove("key".to_string());
     /// ```    
     pub fn remove(&mut self, key: String) -> KvsResult<()> {
-        self.store = self.populate_store()?;
-        if !self.store.contains_key(&key) {
+        if !self.mem_index.contains_key(&key) {
             print!("Key not found");
             return Err(KvsErrors::KeyNotFound());
         }
 
-        let cmd: Command = Command::Remove { key: key.clone() };
+        let cmd = Command::Remove { key: key.clone() };
+        let current_log = self.logs.get_mut(&self.current_log_id)
+            .ok_or(KvsErrors::LogNotFound())?;
+        
         let serialized = serde_json::to_string(&cmd)?;
-        // self.buff_writer.write(serialized.as_bytes())?;
-        writeln!(self.buff_writer, "{}", serialized)?;
-        self.store.remove(&key);
-        // self.buff_writer.flush()?;
+        writeln!(current_log.writer, "{}", serialized)?;
+        current_log.writer.flush()?;
 
+        self.mem_index.remove(&key);
         Ok(())
     }
 
     /// Open the KvStore at a given path. Return the KvStore.   
     pub fn open(path: impl Into<PathBuf>) -> KvsResult<KvStore> {
-        let mut path: PathBuf = path.into(); // Need it to convert to pure PathBuf https://doc.rust-lang.org/beta/std/convert/trait.Into.html
-        if path.is_dir() {
-            path.push("log.txt");
+        let dir_path = path.into();
+        fs::create_dir_all(&dir_path)?;
+
+        let mut logs = HashMap::new();
+        let mut current_log_id = 0;
+
+        // Load existing logs
+        for entry in fs::read_dir(&dir_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("log") {
+                let id = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .ok_or(KvsErrors::InvalidLogFile())?;
+                current_log_id = current_log_id.max(id);
+                logs.insert(id, LogFile::new(id, &dir_path)?);
+            }
         }
-        let file: File = File::options()
-            .create(true)
-            .append(true)
-            .read(true)
-            .open(path)?;
-        let writer = BufWriter::new(file.try_clone()?);
-        let reader = BufReader::new(file.try_clone()?);
-        let new = KvStore::new(writer, reader);
-        Ok(new)
-        // Need a Buffer!!!!!1 That's how we read the actual lines in the file.
-        // https://www.geeksforgeeks.org/i-o-buffering-and-its-various-techniques/
+
+        // Create initial log if none exist
+        if logs.is_empty() {
+            logs.insert(0, LogFile::new(0, &dir_path)?);
+        }
+
+        // Create store and populate index
+        let mut store = KvStore {
+            mem_index: HashMap::new(),
+            logs,
+            current_log_id,
+            dir_path,
+        };
+        store.mem_index = store.populate_mem_index()?;
+        
+        Ok(store)
     }
 
-    fn populate_store(&mut self) -> KvsResult<HashMap<String, String>> {
-        let mut populated_store = HashMap::new();
-        for line in self.buff_reader.by_ref().lines() {
-            let line = line?;
-            let processed_str = line.trim();
-            if processed_str.is_empty() {
-                continue;
-            }
-            let cmd: Command = serde_json::from_str(processed_str)?; // Deseraialize
+    fn populate_mem_index(&mut self) -> KvsResult<HashMap<String, DiskInfo>> {
+        let mut new_mem_index: HashMap<String, DiskInfo> = HashMap::new();
 
-            match cmd {
-                Command::Set { key, value } => {
-                    // println!("This is the cmd for set: {} {}", key, value);
-                    populated_store.insert(key, value);
+        //Process the different log files
+        let log_ids: Vec<_> = self.logs.keys().copied().collect();
+        for log_id in log_ids {
+            let log = self.logs.get_mut(&log_id).ok_or(KvsErrors::LogNotFound())?;
+            log.reader.seek(SeekFrom::Start(0))?; // Rewind the buffer reader to the start of the file
+            let mut pos: u64 = 0;
+
+            while let Some(line) = log.reader.by_ref().lines().next() {
+                let line: String = line?;
+                let processed_str = line.trim();
+                if processed_str.is_empty() {
+                    continue;
                 }
-                Command::Remove { key } => {
-                    // println!("This is the cmd for remove: {}", key);
-                    populated_store.remove(&key);
+
+                let cmd: Command = serde_json::from_str(processed_str)?; // Deserialize
+
+                match cmd {
+                    Command::Set { key, .. } => {
+                        // println!("This is the cmd for set: {} {}", key, value);
+                        new_mem_index.insert(
+                            key,
+                            DiskInfo {
+                                log_index: log_id,
+                                pos,
+                            },
+                        );
+                    }
+                    Command::Remove { key } => {
+                        // println!("This is the cmd for remove: {}", key);
+                        new_mem_index.remove(&key);
+                    }
                 }
+
+                pos = log.reader.stream_position()?;
             }
         }
-        Ok(populated_store)
+        Ok(new_mem_index)
+    }
+
+    fn maybe_compact(&mut self) -> KvsResult<()> {
+           // First, check if compaction is really needed
+           let (total_bytes, stale_bytes) = self.analyze_log_waste()?;
+        
+           // Only compact if we have significant waste (> 50% redundancy)
+           if stale_bytes as f64 / total_bytes as f64 <= REDUNDANCY_THRESHOLD {
+               return Ok(());
+           }
+   
+           // Proceed with compaction
+           self.compact()?;
+           Ok(())
+    }
+
+    fn analyze_log_waste(&mut self) -> KvsResult<(u64, u64)> {
+        let mut total_bytes = 0;
+        let mut active_bytes = 0;
+
+        // Calculate total bytes and active bytes
+        for log in self.logs.values_mut() {
+            let log_size = log.reader.seek(SeekFrom::End(0))?;
+            total_bytes += log_size;
+        }
+
+        // Calculate active bytes by checking current index entries
+        for disk_info in self.mem_index.values() {
+            let log = self.logs.get_mut(&disk_info.log_index)
+                .ok_or(KvsErrors::LogNotFound())?;
+            
+            log.reader.seek(SeekFrom::Start(disk_info.pos))?;
+            let mut line = String::new();
+            log.reader.read_line(&mut line)?;
+            active_bytes += line.len() as u64;
+        }
+
+        Ok((total_bytes, total_bytes - active_bytes))
+    }
+
+    fn compact(&mut self) -> KvsResult<()> {
+        let new_log_id = self.current_log_id + 1;
+        let mut new_log = LogFile::new(new_log_id, &self.dir_path)?;
+        let mut new_index = HashMap::with_capacity(self.mem_index.len());
+        let mut new_pos = 0;
+
+        // Sort entries by log_id to minimize random seeks
+        let mut entries: Vec<_> = self.mem_index.iter().collect();
+        entries.sort_by_key(|(_, info)| info.log_index);
+
+        // Process entries in batches
+        for (key, disk_info) in entries {
+            let log = self.logs.get_mut(&disk_info.log_index)
+                .ok_or(KvsErrors::LogNotFound())?;
+            
+            log.reader.seek(SeekFrom::Start(disk_info.pos))?;
+            let mut line = String::new();
+            log.reader.read_line(&mut line)?;
+            
+            // Only write active entries
+            if let Ok(Command::Set { key: _, value }) = serde_json::from_str(line.trim()) {
+                let new_cmd = Command::Set {
+                    key: key.clone(),
+                    value,
+                };
+                let serialized = serde_json::to_string(&new_cmd)?;
+                writeln!(new_log.writer, "{}", serialized)?;
+                
+                new_index.insert(key.clone(), DiskInfo {
+                    log_index: new_log_id,
+                    pos: new_pos,
+                });
+                
+                new_pos += serialized.len() as u64 + 1;
+            }
+        }
+
+        new_log.writer.flush()?;
+
+        // Clean up old logs
+        let old_logs: Vec<_> = self.logs.keys().cloned().collect();
+        for log_id in old_logs {
+            let path = self.dir_path.join(format!("{}.log", log_id));
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+
+        // Update store state
+        self.logs.clear();
+        self.logs.insert(new_log_id, new_log);
+        self.mem_index = new_index;
+        self.current_log_id = new_log_id;
+
+        Ok(())
     }
 }

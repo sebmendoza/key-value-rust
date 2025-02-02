@@ -27,24 +27,24 @@ fn main() -> KvsResult<()> {
         .get_matches();
 
     // println!("{:#?}", matches);
-    let file_to_use = format!("{}/log.txt", current_dir()?.display());
+    let dir_path = current_dir()?;
 
     if let Some(matches) = matches.subcommand_matches("set") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         let value = matches.get_one::<String>("VALUE").unwrap().to_owned();
-        let mut store = KvStore::open(file_to_use)?;
+        let mut store = KvStore::open(dir_path)?;
         store.set(key, value)?;
         Ok(())
     } else if let Some(matches) = matches.subcommand_matches("get") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         // println!("Before opening: {:?}", file_to_use);
-        let mut store = KvStore::open(file_to_use)?;
+        let mut store = KvStore::open(dir_path)?;
         store.get(key)?;
 
         Ok(())
     } else if let Some(matches) = matches.subcommand_matches("rm") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
-        let mut store = KvStore::open(file_to_use)?;
+        let mut store = KvStore::open(dir_path)?;
 
         store.remove(key)?;
 

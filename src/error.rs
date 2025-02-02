@@ -15,6 +15,18 @@ pub enum KvsErrors {
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
 
+    /// Error indicating there was issue parsing into a number
+    #[error("Error parsing value {0}")]
+    Parse(#[from] std::num::ParseIntError),
+
+    /// Error Log file isn't proper somehow.
+    #[error("Invalid Log File")]
+    InvalidLogFile(),
+
+    /// Error could not find log based on log_id.
+    #[error("Log Not Found")]
+    LogNotFound(),
+
     /// Error indicating that something went wrong.
     #[error("Something went wrong")]
     GeneralError,
