@@ -1,6 +1,7 @@
+// src/bin/kvs-client.rs
 use clap::{arg, command, Command};
-use kvs::{error::KvsResult, KvStore};
-use std::{env::current_dir, process};
+use kvs::{error::KvsResult, network::client::KvsClient};
+use std::process;
 
 fn main() -> KvsResult<()> {
     let matches = command!()
@@ -26,31 +27,26 @@ fn main() -> KvsResult<()> {
         )
         .get_matches();
 
-    // println!("{:#?}", matches);
-    let dir_path = current_dir()?;
+    let addr = "127.0.0.1:4000"; // You might want to make this configurable
+    let mut client = KvsClient::connect(addr)?;
 
     if let Some(matches) = matches.subcommand_matches("set") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         let value = matches.get_one::<String>("VALUE").unwrap().to_owned();
-        let mut store = KvStore::open(dir_path)?;
-        store.set(key, value)?;
-        Ok(())
+        client.set(key, value)?;
     } else if let Some(matches) = matches.subcommand_matches("get") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
-        // println!("Before opening: {:?}", file_to_use);
-        let mut store = KvStore::open(dir_path)?;
-        store.get(key)?;
-
-        Ok(())
+        if let Some(value) = client.get(key)? {
+            println!("{}", value);
+        } else {
+            println!("Key not found");
+        }
     } else if let Some(matches) = matches.subcommand_matches("rm") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
-        let mut store = KvStore::open(dir_path)?;
-
-        store.remove(key)?;
-
-        Ok(())
+        client.remove(key)?;
     } else {
-        eprintln!("No recognizeable commands were run. Try cargo run -- --help for more info.");
-        process::exit(1)
+        eprintln!("No recognizable commands were run. Try cargo run -- --help for more info.");
+        process::exit(1);
     }
+    Ok(())
 }

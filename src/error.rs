@@ -1,3 +1,4 @@
+use std::io;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -27,9 +28,45 @@ pub enum KvsErrors {
     #[error("Log Not Found")]
     LogNotFound(),
 
+    /// Error address not in IP:PORT format
+    #[error("Invalid Address")]
+    InvalidAddress(),
+
+    /// Error engine must be 'kvs' or 'sled'
+    #[error("Invalid Engine")]
+    InvalidEngine(),
+
+    /// Error engine must be 'kvs' or 'sled'
+    #[error("FailedConnection")]
+    FailedConnection(),
+
+    /// Error indicating network-related issues
+    #[error("Network error: {0}")]
+    Network(#[from] NetworkErrors), // Add this variant
+
     /// Error indicating that something went wrong.
     #[error("Something went wrong")]
     GeneralError,
+}
+
+#[derive(Error, Debug)]
+pub enum NetworkErrors {
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
+
+    // Add IO error conversion
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+
+    // Add serde_json error conversion
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
 }
 
 /// A specialized `Result` type for KvStore operations.
