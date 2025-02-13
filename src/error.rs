@@ -44,6 +44,14 @@ pub enum KvsErrors {
     #[error("Network error: {0}")]
     Network(#[from] NetworkErrors), // Add this variant
 
+    /// Error indicating network-related issues
+    #[error("Sled error: {0}")]
+    Sled(#[from] SledErrors), // Add this variant
+
+    /// Error indicating network-related issues
+    #[error("Engine Mismatch Errro")]
+    EngineTypeMismatch(),
+
     /// Error indicating that something went wrong.
     #[error("Something went wrong")]
     GeneralError,
@@ -67,6 +75,18 @@ pub enum NetworkErrors {
     // Add serde_json error conversion
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum SledErrors {
+    #[error("Sled error: {0}")]
+    Sled(sled::Error),
+}
+
+impl From<sled::Error> for KvsErrors {
+    fn from(err: sled::Error) -> KvsErrors {
+        KvsErrors::Sled(SledErrors::Sled(err))
+    }
 }
 
 /// A specialized `Result` type for KvStore operations.

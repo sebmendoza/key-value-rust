@@ -1,17 +1,17 @@
-//!
-//! ## Example
-//!
-//! ```
-//! use kvs::KvStore;
-//!
-//! let mut store = KvStore::new();
-//! store.set("key".to_string(), "value".to_string());
-//! let value = store.get("key".to_string());
-//! assert_eq!(value, Some("value".to_string()));
-//! store.remove("key".to_string());
-//! let value = store.get("key".to_string());
-//! assert_eq!(value, None);
-//! ```
+// !
+// ! ## Example
+// !
+// ! ```
+// ! use kvs::KvStore;
+// !
+// ! let mut store = KvStore::new();
+// ! store.set("key".to_string(), "value".to_string());
+// ! let value = store.get("key".to_string());
+// ! assert_eq!(value, Some("value".to_string()));
+// ! store.remove("key".to_string());
+// ! let value = store.get("key".to_string());
+// ! assert_eq!(value, None);
+// ! ```
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +23,7 @@ use std::path::PathBuf;
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB
 const REDUNDANCY_THRESHOLD: f64 = 0.5; // 50% redundancy
 
+use super::KvsEngine;
 /// Error handling module for KvStore.
 use crate::error::{KvsErrors, KvsResult};
 
@@ -77,15 +78,15 @@ pub struct KvStore {
 //     }
 // }
 
-impl KvStore {
+impl KvsEngine for KvStore {
     //// Inserts a key-value pair into the store. Overwrites the value if the key already exists.
     ///
-    /// # Example
-    /// ```
-    /// let mut store = KvStore::new();
-    /// store.set("key".to_string(), "value".to_string());
-    /// ```
-    pub fn set(&mut self, key: String, value: String) -> KvsResult<()> {
+    // / # Example
+    // / ```
+    // / let mut store = KvStore::new();
+    // / store.set("key".to_string(), "value".to_string());
+    // / ```
+    fn set(&mut self, key: String, value: String) -> KvsResult<()> {
         let cmd = Command::Set {
             key: key.clone(),
             value,
@@ -119,9 +120,9 @@ impl KvStore {
     ///
     /// # Example
     /// ```
-    /// let value = store.get("key".to_string());
+    // / let value = store.get("key".to_string());
     /// ```
-    pub fn get(&mut self, key: String) -> KvsResult<Option<String>> {
+    fn get(&mut self, key: String) -> KvsResult<Option<String>> {
         if let Some(disk_info) = self.mem_index.get(&key) {
             let log = self
                 .logs
@@ -146,9 +147,9 @@ impl KvStore {
     ///
     /// # Example
     /// ```
-    /// store.remove("key".to_string());
+    // / store.remove("key".to_string());
     /// ```    
-    pub fn remove(&mut self, key: String) -> KvsResult<()> {
+    fn remove(&mut self, key: String) -> KvsResult<()> {
         if !self.mem_index.contains_key(&key) {
             print!("Key not found");
             return Err(KvsErrors::KeyNotFound());
@@ -167,7 +168,8 @@ impl KvStore {
         self.mem_index.remove(&key);
         Ok(())
     }
-
+}
+impl KvStore {
     /// Open the KvStore at a given path. Return the KvStore.   
     pub fn open(path: impl Into<PathBuf>) -> KvsResult<KvStore> {
         let dir_path = path.into();

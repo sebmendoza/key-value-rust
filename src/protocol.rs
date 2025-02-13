@@ -1,4 +1,4 @@
-use crate::error::{NetworkErrors, KvsResult};
+use crate::error::{KvsResult, NetworkErrors};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 

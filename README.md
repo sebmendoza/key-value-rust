@@ -24,3 +24,8 @@ The compaction process removes redundant entries from the log while preserving t
 
 **Disk I/O**: Minimizes unnecessary disk operations by compacting only when needed
 **Sequential Access**: Sorts entries before processing to improve read patterns
+
+## Testing
+
+- Put up the server: `RUST_LOG=debug cargo run --bin kvs-server`
+- Put up the client: `cargo run --bin kvs-client get mykey`

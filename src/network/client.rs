@@ -1,6 +1,6 @@
 // src/network/client.rs
 
-use crate::error::{NetworkErrors, KvsResult, KvsErrors};
+use crate::error::{KvsErrors, KvsResult, NetworkErrors};
 use crate::protocol::{Protocol, Request, Response};
 use std::net::TcpStream;
 

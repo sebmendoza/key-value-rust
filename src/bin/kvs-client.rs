@@ -9,6 +9,12 @@ fn main() -> KvsResult<()> {
         .about(env!("CARGO_PKG_DESCRIPTION"))
         .author(env!("CARGO_PKG_AUTHORS"))
         .version(env!("CARGO_PKG_VERSION"))
+        .arg(
+            arg!(--addr <ADDR>)
+                .global(true)
+                .default_value("127.0.0.1:4000")
+                .help("Server address"),
+        )
         .subcommand(
             Command::new("set")
                 .about("Give a key and value to store in database")
@@ -27,8 +33,9 @@ fn main() -> KvsResult<()> {
         )
         .get_matches();
 
-    let addr = "127.0.0.1:4000"; // You might want to make this configurable
+    let addr: &String = matches.get_one::<String>("addr").unwrap();
     let mut client = KvsClient::connect(addr)?;
+
 
     if let Some(matches) = matches.subcommand_matches("set") {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
@@ -45,8 +52,10 @@ fn main() -> KvsResult<()> {
         let key = matches.get_one::<String>("KEY").unwrap().to_owned();
         client.remove(key)?;
     } else {
-        eprintln!("No recognizable commands were run. Try cargo run -- --help for more info.");
+        eprintln!("Unknown subcommand");
         process::exit(1);
     }
-    Ok(())
+    process::exit(0);
+
+   
 }

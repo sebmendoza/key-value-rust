@@ -17,6 +17,7 @@ anyhow = "1.0.89"
 thiserror = "1.0.64"
 log = "0.4"
 env_logger = "0.10"
+sled = "0.34.7"
 
 [dev-dependencies]
 assert_cmd = "0.11"
