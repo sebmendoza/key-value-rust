@@ -135,7 +135,6 @@ impl KvsEngine for KvStore {
 
             let cmd: Command = serde_json::from_str(line.trim())?;
             if let Command::Set { key: _, value } = cmd {
-                print!("{}", value); // Print the value directly for found keys
                 return Ok(Some(value));
             }
         }
